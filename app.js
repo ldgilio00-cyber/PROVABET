@@ -13,8 +13,24 @@ const KEY = "ts_v5";
 const OLD_KEYS = ["ts_v4","ts_v3","ts_v2","ts_v1","ts_v0","ts"];
 const DEFAULT = { budgetStart: 0, bets: [] };
 
+const DAYS_VIEW_KEY = "days_view"; // "all" | "closed"
+
 function safeParse(raw){
   try { return JSON.parse(raw); } catch { return null; }
+}
+
+function getDaysView(){
+  return localStorage.getItem(DAYS_VIEW_KEY) || "all";
+}
+function setDaysView(v){
+  localStorage.setItem(DAYS_VIEW_KEY, v);
+  updateDaysButtons();
+  render();
+}
+function updateDaysButtons(){
+  const v = getDaysView();
+  $("daysShowAll")?.classList.toggle("active", v === "all");
+  $("daysShowClosed")?.classList.toggle("active", v === "closed");
 }
 
 function normalizeState(s){
@@ -24,7 +40,7 @@ function normalizeState(s){
   if (!Array.isArray(state.bets)) state.bets = [];
   state.bets = state.bets.map(b => normalizeBet(b)).filter(Boolean);
 
-  // ordina: più recente prima (per data + fallback)
+  // ordina: più recente prima
   state.bets.sort((a,b)=>{
     const da = String(a.date||"");
     const db = String(b.date||"");
@@ -99,22 +115,17 @@ function calcStakeAmount(budgetStart, stakePct, stakeAmt) {
  * - bankrollClosedPoints: serie grafico (si muove SOLO a bet chiusa)
  */
 function recompute(state){
-  let budgetAvail = Number(state.budgetStart || 0);    // budget disponibile “reale”
-  let bankrollClosed = Number(state.budgetStart || 0); // bankroll grafico (solo chiuse)
+  let budgetAvail = Number(state.budgetStart || 0);
+  let bankrollClosed = Number(state.budgetStart || 0);
   const closedPoints = [bankrollClosed];
 
-  // calcolo da “vecchia -> nuova”
   for (const b of state.bets.slice().reverse()) {
     b.budgetBefore = budgetAvail;
 
-    // ✅ stake% sempre su budget iniziale
     b.stakeUsed = calcStakeAmount(state.budgetStart, b.stakePct, b.stakeAmt);
     b.stakeUsed = Math.max(0, Number(b.stakeUsed || 0));
+    b.stakeUsed = Math.min(b.stakeUsed, Math.max(0, budgetAvail)); // non andare sotto zero
 
-    // ✅ non permettere che superi il budget disponibile
-    b.stakeUsed = Math.min(b.stakeUsed, Math.max(0, budgetAvail));
-
-    // scala subito dal disponibile
     budgetAvail -= b.stakeUsed;
 
     const odds = Number(b.odds || 0);
@@ -122,20 +133,19 @@ function recompute(state){
 
     if (b.outcome === "Vinta") {
       b.profit = b.stakeUsed * (odds - 1);
-      budgetAvail += b.winGross;          // rientra vincita lorda sul disponibile
-      bankrollClosed += b.profit;         // grafico sale del profitto
+      budgetAvail += b.winGross;
+      bankrollClosed += b.profit;
       closedPoints.push(bankrollClosed);
     } else if (b.outcome === "Persa") {
       b.profit = -b.stakeUsed;
-      bankrollClosed += b.profit;         // grafico scende solo quando chiudi persa
+      bankrollClosed += b.profit;
       closedPoints.push(bankrollClosed);
     } else if (b.outcome === "Void") {
       b.profit = 0;
-      budgetAvail += b.stakeUsed;         // rimborso puntata
-      closedPoints.push(bankrollClosed);  // punto uguale (chiusa)
+      budgetAvail += b.stakeUsed;
+      closedPoints.push(bankrollClosed);
     } else {
-      // In corso
-      b.profit = 0;
+      b.profit = 0; // In corso
     }
 
     b.budgetAfter = budgetAvail;
@@ -174,11 +184,9 @@ function render(){
   let state = recompute(load());
   save(state);
 
-  // budget top
   if ($("budgetStart")) $("budgetStart").textContent = money(state.budgetStart || 0);
   if ($("budgetNow")) $("budgetNow").textContent = money(state.budgetNow || 0);
 
-  // filtri scommesse
   const filt = ($("filterOutcome")?.value || "Tutte");
   const q = (($("search")?.value || "").trim().toLowerCase());
   const match = (b) => {
@@ -193,10 +201,8 @@ function render(){
   renderBetList("listOpen", openBets, true);
   renderBetList("listClosed", closedBets, false);
 
-  // Giorni
   renderDays(state);
 
-  // stats (chiuse)
   const total = state.bets.length;
   const closed = state.bets.filter(b => b.outcome !== "In corso").length;
   const wins = state.bets.filter(b => b.outcome === "Vinta").length;
@@ -221,7 +227,6 @@ function render(){
   if ($("sProfit")) $("sProfit").textContent = money(profitClosed);
   if ($("sROI")) $("sROI").textContent = pct(roi);
 
-  // charts
   if ($("cBank")) drawLineChart($("cBank"), state.bankrollClosedPoints || [Number(state.budgetStart||0)]);
   if ($("cPie")) drawPie($("cPie"), [wins, losses, voids], ["Vinte","Perse","Void"]);
   if ($("cTip")) drawBarsSigned($("cTip"), tipsterProfitPairs(state).slice(0, 10));
@@ -281,12 +286,13 @@ function renderBetList(containerId, bets, isOpen){
   }
 }
 
-// -------- Giorni (accordion)
+// -------- Giorni (accordion + filtro + grafico cumulativo)
 function renderDays(state){
   const box = $("daysList");
   if (!box) return;
 
-  // raggruppa per data
+  const view = getDaysView(); // "all" | "closed"
+
   const map = new Map();
   for (const b of state.bets) {
     const d = (b.date || "").trim() || "Senza data";
@@ -294,13 +300,27 @@ function renderDays(state){
     map.get(d).push(b);
   }
 
-  const dates = Array.from(map.keys()).sort((a,b)=> b.localeCompare(a)); // YYYY-MM-DD desc
+  const dates = Array.from(map.keys()).sort((a,b)=> b.localeCompare(a));
   box.innerHTML = "";
 
   if (!dates.length) {
     box.innerHTML = `<div class="hint">Nessuna scommessa ancora.</div>`;
+    if ($("cDays")) drawLineChart($("cDays"), [0]);
     return;
   }
+
+  // grafico cumulativo (solo chiuse)
+  const datesAsc = dates.slice().sort((a,b)=> a.localeCompare(b));
+  let cum = 0;
+  const points = [0];
+  for (const d of datesAsc) {
+    const bets = map.get(d) || [];
+    const closed = bets.filter(x => x.outcome !== "In corso");
+    const dailyProfit = closed.reduce((s,x)=> s + Number(x.profit||0), 0);
+    cum += dailyProfit;
+    points.push(cum);
+  }
+  if ($("cDays")) drawLineChart($("cDays"), points);
 
   for (const d of dates) {
     const bets = map.get(d);
@@ -336,11 +356,12 @@ function renderDays(state){
     const body = document.createElement("div");
     body.className = "dayBody";
 
-    // Dentro al body: lista scommesse di quel giorno (con quick close se in corso)
     const inner = document.createElement("div");
     inner.className = "table";
     body.appendChild(inner);
-    renderBetsInto(inner, bets);
+
+    const displayBets = (view === "closed") ? closed : bets;
+    renderBetsInto(inner, displayBets);
 
     header.addEventListener("click", ()=>{
       body.classList.toggle("show");
@@ -355,7 +376,6 @@ function renderDays(state){
 function renderBetsInto(containerEl, bets){
   containerEl.innerHTML = "";
 
-  // ordina: in corso prima, poi chiuse
   const sorted = bets.slice().sort((a,b)=>{
     const ao = a.outcome === "In corso" ? 0 : 1;
     const bo = b.outcome === "In corso" ? 0 : 1;
@@ -536,7 +556,6 @@ function importFromFile(file){
     const incoming = normalizeState(obj);
     const current = load();
 
-    // OK = sostituisci, Annulla = unisci
     const replace = confirm("Import: OK = Sostituisci tutto. Annulla = Unisci ai dati attuali.");
     if (replace) {
       save(incoming);
@@ -545,20 +564,16 @@ function importFromFile(file){
       return;
     }
 
-    // Merge: dedupe by id
     const ids = new Set(current.bets.map(b=>b.id));
     const merged = current.bets.slice();
 
     for (const b of incoming.bets) {
       const bet = normalizeBet(b);
-      if (!bet.id || ids.has(bet.id)) {
-        bet.id = uid();
-      }
+      if (!bet.id || ids.has(bet.id)) bet.id = uid();
       ids.add(bet.id);
       merged.push(bet);
     }
 
-    // budgetStart: se il tuo è 0 e l'import ha un valore, prendilo
     if ((Number(current.budgetStart||0) === 0) && Number(incoming.budgetStart||0) > 0) {
       current.budgetStart = incoming.budgetStart;
     }
@@ -817,13 +832,16 @@ function init(){
 
   $("btnBackup")?.addEventListener("click", backup);
 
-  // Import
   $("btnImport")?.addEventListener("click", ()=> $("fileImport").click());
   $("fileImport")?.addEventListener("change", (e)=>{
     const f = e.target.files?.[0];
     if (f) importFromFile(f);
     e.target.value = "";
   });
+
+  $("daysShowAll")?.addEventListener("click", ()=> setDaysView("all"));
+  $("daysShowClosed")?.addEventListener("click", ()=> setDaysView("closed"));
+  updateDaysButtons();
 
   document.querySelectorAll(".tab").forEach(btn=>{
     btn.addEventListener("click", ()=> showPage(btn.dataset.page));
