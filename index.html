@@ -139,9 +139,21 @@
     <!-- ===================== PAGE: GIORNI ===================== -->
     <section class="page" id="page-days">
       <section class="card">
-        <div class="row between">
-          <div class="h2">Giorni</div>
-          <div class="hint">Profitto = solo scommesse chiuse (in corso non influenzano).</div>
+        <div class="row between" style="gap:10px; flex-wrap:wrap;">
+          <div>
+            <div class="h2">Giorni</div>
+            <div class="hint">Profitto e grafico = solo scommesse chiuse (in corso non influenzano).</div>
+          </div>
+
+          <div class="seg">
+            <button class="segBtn active" id="daysShowAll" type="button">Tutte</button>
+            <button class="segBtn" id="daysShowClosed" type="button">Solo chiuse</button>
+          </div>
+        </div>
+
+        <div class="chartCard mini">
+          <div class="chartTitle">Saldo cumulativo per giorno (chiuse)</div>
+          <canvas id="cDays" width="600" height="200"></canvas>
         </div>
 
         <div class="table" id="daysList"></div>
