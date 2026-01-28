@@ -308,6 +308,33 @@ input[type="date"]{
 }
 .dayBody.show{display:block}
 
+/* Segmented control (Giorni) */
+.seg{
+  display:flex;
+  gap:0;
+  border:1px solid var(--line);
+  border-radius:14px;
+  overflow:hidden;
+  background:rgba(255,255,255,.04);
+}
+.segBtn{
+  border:0;
+  padding:10px 12px;
+  background:transparent;
+  color:rgba(232,237,247,.78);
+  font-weight:900;
+  font-size:12px;
+}
+.segBtn.active{
+  background:rgba(43,124,255,.18);
+  color:rgba(232,237,247,.96);
+}
+
+/* Chart card mini (Giorni) */
+.chartCard.mini{
+  margin-top:12px;
+}
+
 /* Responsive */
 @media (max-width:700px){
   .grid{grid-template-columns:1fr}
